@@ -1,4 +1,8 @@
 import tensorflow as tf
+from tensorflow.compat.v1.lite.experimental.nn import TFLiteLSTMCell
+from tensorflow.compat.v1.lite.experimental.nn import dynamic_rnn as lite_dynamic_rnn
+from tensorflow.compat.v1.nn import static_rnn
+from tensorflow.compat.v1.nn.rnn_cell import LSTMCell
 
 
 # from tensorflow.compat.v1.lite.experimental.nn import TFLiteLSTMCell, dynamic_rnn
@@ -36,23 +40,33 @@ import tensorflow as tf
 #         return x
 
 
-class LiteLSTM:
-    # CONFIG = tf.ConfigProto(device_count={"GPU": 0})
+class StaticLSTM:
+    def __init__(self, latent_units):
+        self._cell = LSTMCell(latent_units)
 
-    def __init__(self, latent_units, vocab_size, embeddings_dim, class_size, *args, **kwargs):
-        self._latent_units = latent_units
-        self._vocab_size = vocab_size
-        self._embeddings_dim = embeddings_dim
-        self._class_size = class_size
+    def output(self, features, sequence_length=None):
+        input_lstm = tf.unstack(features, axis=1)
+        output, state = static_rnn(self._cell, input_lstm, dtype=tf.float32, sequence_length=sequence_length)
+        output = tf.stack(output, axis=1)
 
-    def __call__(self, indices, *args, **kwargs):
-        # Weights and biases for output softmax layer.
-        # input image placeholder
+        return output
 
-        lstm_inputs = tf.transpose(indices, [1, 0, 2])
-        cell_fw = tf.lite.experimental.nn.TFLiteLSTMCell(self._latent_units)
-        cell_bw = tf.lite.experimental.nn.TFLiteLSTMCell(self._latent_units)
 
-        outputs_fw, _ = tf.lite.experimental.nn.dynamic_rnn(cell_fw, lstm_inputs)
+class DynamicLSTM:
+    def __init__(self, latent_units):
+        self._cell = TFLiteLSTMCell(latent_units)
 
-        return outputs_fw
+    def output(self, features, sequence_length=None):
+        input_lstm = tf.transpose(features, [1, 0, 2])
+        output, _ = lite_dynamic_rnn(self._cell, input_lstm, dtype=tf.float32, sequence_length=sequence_length)
+        output = tf.transpose(output, [1, 0, 2])
+
+        return output
+
+
+class CustomLSTM:
+    def __init__(self, latent_units):
+        pass
+
+    def __call__(self, features):
+        pass
