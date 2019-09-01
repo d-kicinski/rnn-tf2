@@ -1,6 +1,8 @@
-import os
 from itertools import chain
 from time import time
+
+import os
+from typing import *
 
 os.environ['TF_ENABLE_CONTROL_FLOW_V2'] = '1'
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -10,27 +12,26 @@ import tensorflow as tf
 import tensorflow.compat.v1 as tfc
 
 from dataclasses import dataclass
-from typing import *
 
-from models import rnn
+from models.rnn import RNN, StaticLSTM, DynamicLSTM, LiteDynamicLSTM
 
 
 @dataclass
 class Shapes:
-    batch = 10
-    sequence = 30
-    features = 50
-    latent = 100
+    batch: int = 10
+    sequence: int = 30
+    features: int = 50
+    latent: int = 100
 
 
 @dataclass
 class Constants:
-    epochs = 100
-    max_sequence_length = 500
+    epochs: int = 100
+    max_sequence_length: int = 1000
 
 
 class TrackTime:
-    def __init__(self, name):
+    def __init__(self, name: str):
         self._name = name
         self._time_begin = None
         self._time_end = None
@@ -45,15 +46,20 @@ class TrackTime:
 
 @dataclass
 class Data:
-    sequence_lengths: List
-    features: List
+    sequence_lengths: List[np.array]
+    features: List[np.array]
+
+    @staticmethod
+    def _benchmark_range():
+        seq_range = [10, 50, 200, 500, 1000]
+        return chain(seq_range, reversed(seq_range))
 
     @staticmethod
     def dynamic():
         """Not padded data with different sequence lengths"""
         sequence_lengths = []
         features = []
-        for seq_len in chain(range(100, 501, 100), range(500, 99, -100)):
+        for seq_len in Data._benchmark_range():
             sequence_lengths.append([np.array([seq_len for _ in range(Shapes.batch)])
                                      for _ in range(Constants.epochs)])
 
@@ -68,7 +74,7 @@ class Data:
         features = []
         sequence_lengths = []
 
-        for seq_len in chain(range(100, 501, 100), range(500, 99, -100)):
+        for seq_len in Data._benchmark_range():
             sequence_lengths.append([np.array([seq_len for _ in range(Shapes.batch)])
                                      for _ in range(Constants.epochs)])
 
@@ -78,50 +84,38 @@ class Data:
         return Data(sequence_lengths, features)
 
 
-def run_dynamic_rnn(data: Data):
+def run_rnn(model_cls: Type[RNN.Class], data: Data, use_sequence_length_info: bool = False):
+    seq_len_dim = Constants.max_sequence_length if model_cls is StaticLSTM else None
     with tfc.variable_scope("input"):
-        features = tf.placeholder(shape=(Shapes.batch, None, Shapes.features), dtype=tf.float32)
-
-    with tfc.variable_scope("dynamic_lstm"):
-        lstm_dynamic = rnn.DynamicLSTM(latent_units=Shapes.latent).output(features)
-
-    with tfc.Session() as sess:
-        sess.run(tfc.global_variables_initializer())
-
-        with TrackTime("[lstm_dynamic]\t TOTAL"):
-            for seq_len, data in zip(data.sequence_lengths, data.features):
-                with TrackTime(f"[lstm_dynamic]\t batch: {Shapes.batch}\t sequence_length: {seq_len}\t"):
-                    for batch in data:
-                        sess.run(lstm_dynamic, feed_dict={features: batch})
-
-
-def run_static_rnn(data: Data, use_sequence_length_info=False):
-    with tfc.variable_scope("input"):
-        features = tfc.placeholder(shape=(Shapes.batch, Constants.max_sequence_length, Shapes.features),
+        features = tfc.placeholder(shape=(Shapes.batch, seq_len_dim, Shapes.features),
                                    dtype=tf.float32, name="features")
 
         sequence_length = tfc.placeholder(shape=(Shapes.batch,), dtype=tf.float32, name="sequence_length")
 
-    with tfc.variable_scope("model", reuse=tfc.AUTO_REUSE):
-        lstm_static = rnn.StaticLSTM(latent_units=Shapes.latent) \
+    with tfc.variable_scope(model_cls.__name__ + str(use_sequence_length_info), reuse=tfc.AUTO_REUSE):
+        lstm = model_cls(latent_units=Shapes.latent) \
             .output(features, sequence_length=sequence_length if use_sequence_length_info else None)
 
     with tfc.Session() as sess:
         sess.run(tfc.global_variables_initializer())
-
-        with TrackTime("[lstm_dynamic]\t TOTAL"):
+        print(f"Running {model_cls.__name__}")
+        with TrackTime("TOTAL"):
             for seq_len, data in zip(data.sequence_lengths, data.features):
-                with TrackTime(f"[lstm_static]\t batch: {Shapes.batch}\t sequence_length: {seq_len[0][0]}\t"):
+                with TrackTime(f"batch_size: {Shapes.batch}\t sequence_length: {seq_len[0][0]}\t "
+                               f"use_sequence_length_info={use_sequence_length_info}\t "):
                     for seq_len_b, data_b in zip(seq_len, data):
-                        sess.run(lstm_static, feed_dict={features: data_b,
-                                                         sequence_length: seq_len_b})
+                        sess.run(lstm, feed_dict={features: data_b,
+                                                  sequence_length: seq_len_b})
 
 
 if __name__ == '__main__':
-    # run_static_rnn()
     data_dynamic = Data.dynamic()
-    # run_dynamic_rnn(data_dynamic)
+    run_rnn(DynamicLSTM, data_dynamic)
+    run_rnn(DynamicLSTM, data_dynamic, use_sequence_length_info=True)
+
+    run_rnn(LiteDynamicLSTM, data_dynamic)
+    run_rnn(LiteDynamicLSTM, data_dynamic, use_sequence_length_info=True)
 
     data_static = Data.static()
-    run_static_rnn(data_static, use_sequence_length_info=True)
-    run_static_rnn(data_static)
+    run_rnn(StaticLSTM, data_static)
+    run_rnn(StaticLSTM, data_static, use_sequence_length_info=True)
