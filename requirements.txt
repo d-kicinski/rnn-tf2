@@ -1,6 +1,5 @@
 numpy
 #tensorflow-gpu==2.0.0-rc0
-#tensorflow-gpu==1.14.0
 spacy
 dataclasses
 scikit-learn
