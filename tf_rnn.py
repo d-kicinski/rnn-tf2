@@ -56,7 +56,7 @@ class Data:
     def _create_dataset(seq, pad: bool = False):
         sequence_lengths = []
         features = []
-        max_sequence_length = len(seq)
+        max_sequence_length = max(seq)
         for seq_len in Data._benchmark_range(seq):
             sequence_lengths.append([np.array([seq_len for _ in range(Shapes.batch)]).astype(np.float32)
                                      for _ in range(Constants.batch_count)])
